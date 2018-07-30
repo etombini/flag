@@ -265,9 +265,11 @@ type input struct {
 }
 
 type output struct {
-	errInstantiation bool
-	errParsing       bool
-	values           map[string][]string
+	errInstantiation   bool
+	errParsing         bool
+	errParsingDefaults bool
+	errParsingEnv      bool
+	values             map[string][]string
 }
 
 type testItem struct {
@@ -282,7 +284,9 @@ func TestAddMultisWithEnv(t *testing.T) {
 
 	testTable := make([]testItem, 0)
 
-	ti1 := testItem{
+	//ti1 := testItem{
+	testTable = append(testTable, testItem{
+		testName: "multi01",
 		input: input{
 			flags:         []string{"-l", "--long", "--long-is-long"},
 			valuation:     Multi,
@@ -292,19 +296,69 @@ func TestAddMultisWithEnv(t *testing.T) {
 			description:   "some description",
 			setEnv:        make(map[string]string),
 		},
+		command: []string{"-l", "value1", "--long", "value2", "--long-is-long", "value3"},
 		output: output{
-			errInstantiation: false,
-			errParsing:       false,
+			errInstantiation:   false,
+			errParsing:         false,
+			errParsingDefaults: false,
+			errParsingEnv:      false,
 			values: map[string][]string{
 				"-l":             []string{"value1", "value2", "value3"},
 				"--long":         []string{"value1", "value2", "value3"},
 				"--long-is-long": []string{"value1", "value2", "value3"},
 			},
 		},
-		command: []string{"-l", "value1", "--long", "value2", "--long-is-long", "value3"},
-	}
+	})
 
-	testTable = append(testTable, ti1)
+	testTable = append(testTable, testItem{
+		testName: "multiFromEnv01",
+		input: input{
+			flags:         []string{"-l", "--long", "--long-is-long"},
+			valuation:     Multi,
+			envName:       "TEST_LONG",
+			defaultValues: []string{"default_value"},
+			separator:     ",",
+			description:   "some description",
+			setEnv:        make(map[string]string),
+		},
+		command: []string{},
+		output: output{
+			errInstantiation:   false,
+			errParsing:         false,
+			errParsingDefaults: false,
+			errParsingEnv:      false,
+			values: map[string][]string{
+				"-l":             []string{"default_value"},
+				"--long":         []string{"default_value"},
+				"--long-is-long": []string{"default_value"},
+			},
+		},
+	})
+
+	testTable = append(testTable, testItem{
+		testName: "multiFromEnvWithSeparator",
+		input: input{
+			flags:         []string{"-l", "--long", "--long-is-long"},
+			valuation:     Multi,
+			envName:       "TEST_LONG",
+			defaultValues: []string{"default_value01", "default_value02", "default_value03"},
+			separator:     ",",
+			description:   "some description",
+			setEnv:        make(map[string]string),
+		},
+		command: []string{},
+		output: output{
+			errInstantiation:   false,
+			errParsing:         false,
+			errParsingDefaults: false,
+			errParsingEnv:      false,
+			values: map[string][]string{
+				"-l":             []string{"default_value01", "default_value02", "default_value03"},
+				"--long":         []string{"default_value01", "default_value02", "default_value03"},
+				"--long-is-long": []string{"default_value01", "default_value02", "default_value03"},
+			},
+		},
+	})
 
 	for _, ti := range testTable {
 		//setting up environment variables
@@ -365,6 +419,36 @@ func TestAddMultisWithEnv(t *testing.T) {
 		if err := f.parse(ti.command); err != nil {
 			if !ti.output.errParsing {
 				t.Errorf("%s error [%s]: parsing failed: %s", funcName, ti.testName, err)
+			}
+		}
+
+		if err := f.parseEnv(); err != nil {
+			if !ti.output.errParsingEnv {
+				t.Errorf("%s error [%s]: parsing environment variables failed: %s", funcName, ti.testName, err)
+			}
+		}
+
+		if err := f.parseDefaults(); err != nil {
+			if !ti.output.errParsingDefaults {
+				t.Errorf("%s error [%s]: parsing default values failed: %s", funcName, ti.testName, err)
+			}
+		}
+
+		for flagName, values := range ti.output.values {
+			v, err := f.Get(flagName)
+			if err != nil {
+				t.Errorf("%s error [%s]: can not get flag %s values: %s", funcName, ti.testName, flagName, err)
+			}
+			for _, expectedValue := range values {
+				found := false
+				for _, setValue := range v {
+					if expectedValue == setValue {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("%s error [%s]: expecting value %s for flag %s to be set", funcName, ti.testName, expectedValue, flagName)
+				}
 			}
 		}
 
