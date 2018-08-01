@@ -213,54 +213,67 @@ func (f *Flag) Parse() error {
 	return nil
 }
 
-func (f *Flag) parseNone(args []string) error {
+func (f *Flag) parse(args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
 	fv, ok := f.f[args[0]]
 	if !ok {
 		return fmt.Errorf("unknown flag: %s", args[0])
 	}
-	fv.values = append(fv.values, "true")
-	fv.isSet = true
+
+	if (fv.valuation == Mono || fv.valuation == Multi) && len(args) < 2 {
+		return fmt.Errorf("flag %s requires a value", args[0])
+	}
+
+	//Valuation None
+	if fv.valuation == None {
+		return f.parseNone(fv, args[1:])
+	}
+
+	//Valuation Mono
+	if fv.valuation == Mono {
+		return f.parseMono(fv, args[1:])
+	}
+
+	//Valuation Multi
+	if fv.valuation == Multi {
+		return f.parseMulti(fv, args[1:])
+	}
+
+	return fmt.Errorf("error with %s flag, it must be a boolean, mono-valuated or multi-valuated", args[0])
+}
+
+func (f *Flag) parseNone(fItem *flagItem, args []string) error {
+	fItem.values = append(fItem.values, "true")
+	fItem.isSet = true
+	return f.parse(args)
+}
+
+func (f *Flag) parseMono(fItem *flagItem, args []string) error {
+	if fItem.isSet {
+		return fmt.Errorf("flag %s defined several times", args[0])
+	}
+	fItem.values = append(fItem.values, args[0])
+	fItem.isSet = true
 	return f.parse(args[1:])
 }
 
-func (f *Flag) parseMono(args []string) error {
-	fv, ok := f.f[args[0]]
-	if !ok {
-		return fmt.Errorf("unknown flag: %s", args[0])
+func (f *Flag) parseMulti(fItem *flagItem, args []string) error {
+	if len(fItem.separator) == 0 || !strings.Contains(args[0], fItem.separator) {
+		fItem.values = append(fItem.values, args[0])
+		fItem.isSet = true
+		return f.parse(args[1:])
 	}
-	if len(args) < 2 {
-		return fmt.Errorf("flag %s requires a value", args[0])
-	}
-	if fv.isSet {
-		return fmt.Errorf("flag %s defined several times", args[0])
-	}
-	fv.values = append(fv.values, args[1])
-	fv.isSet = true
-	return f.parse(args[2:])
-}
-
-func (f *Flag) parseMulti(args []string) error {
-	fv, ok := f.f[args[0]]
-	if !ok {
-		return fmt.Errorf("unknown flag: %s", args[0])
-	}
-	if len(args) < 2 {
-		return fmt.Errorf("flag %s requires a value", args[0])
-	}
-	if len(fv.separator) == 0 || !strings.Contains(args[1], fv.separator) {
-		fv.values = append(fv.values, args[1])
-		fv.isSet = true
-		return f.parse(args[2:])
-	}
-	splitted := strings.Split(args[1], fv.separator)
+	splitted := strings.Split(args[0], fItem.separator)
 	for _, v := range splitted {
 		if len(v) == 0 {
 			continue
 		}
-		fv.values = append(fv.values, v)
-		fv.isSet = true
+		fItem.values = append(fItem.values, v)
+		fItem.isSet = true
 	}
-	return f.parse(args[2:])
+	return f.parse(args[1:])
 }
 
 func (f *Flag) parseEnv() error {
@@ -323,33 +336,6 @@ func (f *Flag) parseDefaults() error {
 		}
 	}
 	return nil
-}
-
-func (f *Flag) parse(args []string) error {
-	if len(args) == 0 {
-		return nil
-	}
-	fv, ok := f.f[args[0]]
-	if !ok {
-		return fmt.Errorf("unknown flag: %s", args[0])
-	}
-
-	//CLI - valuation None
-	if fv.valuation == None {
-		return f.parseNone(args)
-	}
-
-	//CLI - valuation Mono
-	if fv.valuation == Mono {
-		return f.parseMono(args)
-	}
-
-	//CLI - valuation Multi
-	if fv.valuation == Multi {
-		return f.parseMulti(args)
-	}
-
-	return fmt.Errorf("error with %s flag, it must be a boolean, mono-valuated or multi-valuated", args[0])
 }
 
 func (f *Flag) isOK(key string, v Valuation) error {
