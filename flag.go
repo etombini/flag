@@ -467,6 +467,22 @@ func (f *Flag) GetInt64(key string) ([]int64, error) {
 	return res, nil
 }
 
+//GetUint returns a slice of Int for each value associated with the flag
+func (f *Flag) GetUint(key string) ([]uint, error) {
+	if !f.isMono(key) && !f.isMulti(key) {
+		return nil, fmt.Errorf("%s key is a boolean flag", key)
+	}
+	res := make([]uint, 0)
+	for _, v := range f.f[key].values {
+		i, err := strconv.ParseUint(v, 10, 0)
+		if err != nil {
+			return res, err
+		}
+		res = append(res, uint(i))
+	}
+	return res, nil
+}
+
 //GetUint8 returns a slice of Int for each value associated with the flag
 func (f *Flag) GetUint8(key string) ([]uint8, error) {
 	if !f.isMono(key) && !f.isMulti(key) {
