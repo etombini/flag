@@ -5,7 +5,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 )
 
 //Flag is the main data structure holding application flags
@@ -57,22 +56,6 @@ type flagItem struct {
 	valuation   Valuation
 	separator   string
 	description string
-}
-
-func (fi *flagItem) String() string {
-	str := strings.Join(fi.flags, ",")
-	str += "\t"
-	if len(fi.envFlag) != 0 {
-		str += fi.envFlag
-	}
-	str += "\t"
-	if fi.valuation == Multi && len(fi.separator) != 0 {
-		str += fi.separator
-	}
-	str += "\t"
-	str += fi.description
-	str += "\t"
-	return str
 }
 
 //NewFlag returns a new pointer to Flag
@@ -353,7 +336,7 @@ func (f *Flag) parse(args []string) error {
 
 	//CLI - valuation None
 	if fv.valuation == None {
-		return f.parseMono(args)
+		return f.parseNone(args)
 	}
 
 	//CLI - valuation Mono
@@ -596,10 +579,7 @@ func (f *Flag) GetFloat64(key string) ([]float64, error) {
 
 //Usage prints command usage on stdout
 func (f *Flag) Usage() {
-	title := "flags\tenvironment\nseparator\ndescription"
-
-	w := tabwriter.NewWriter(os.Stdout, 0, 4, 0, '\t', 0)
-	fmt.Fprintln(w, title)
+	fmt.Printf("Usage: %s [OPTIONS]\nOptions:\n", os.Args[0])
 
 	fItem := make(map[*flagItem]bool)
 
@@ -608,6 +588,20 @@ func (f *Flag) Usage() {
 	}
 
 	for fi := range fItem {
-		fmt.Fprintln(w, fi)
+		if fi.valuation == Multi {
+			fmt.Printf("  %s", strings.Join(fi.flags, ", and/or "))
+		} else {
+			fmt.Printf("  %s", strings.Join(fi.flags, ", or "))
+		}
+
+		if len(fi.envFlag) > 0 {
+			fmt.Printf(", or set $%s", fi.envFlag)
+		}
+		if len(fi.separator) > 0 {
+			fmt.Printf(" (set multiple values at once using separator '%s')", fi.separator)
+		}
+		description := strings.Replace(fi.description, "\n", "\n\t\t", -1)
+		fmt.Printf("\n\t\t%s\n\n", description)
+
 	}
 }
