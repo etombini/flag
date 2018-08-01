@@ -2,11 +2,12 @@ package flag
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
 
-func TestNewFflag(t *testing.T) {
+func TestNewFlag(t *testing.T) {
 	funcName := "TestNewFflag"
 	f := NewFlag()
 	if f == nil {
@@ -60,7 +61,6 @@ func TestCheckFlagFormat(t *testing.T) {
 			t.Errorf("%s error: expected checkFlagFormat(%s) to return %t, got %v", funcName, k, v, err)
 		}
 	}
-
 }
 
 func TestIsValuationNone(t *testing.T) {
@@ -126,134 +126,6 @@ func TestIsValuationMulti(t *testing.T) {
 	}
 }
 
-func TestParseMulti(t *testing.T) {
-	funcName := "TestGlobal"
-
-	cmd1 := []string{
-		"-server", "10.0.0.1",
-		"-server", "10.0.0.2",
-		"-client", "10.0.0.3",
-		"-client", "10.0.0.4",
-		"-client", "10.0.0.5",
-		"-server", "10.0.0.6,10.0.0.7,10.0.0.8",
-	}
-	f := NewFlag()
-	if err := f.AddMultiFlag("-server", "192.168.0.1", ",", "servers IP addresses"); err != nil {
-		t.Errorf("%s error: %s", funcName, err)
-	}
-	if err := f.AddMultiFlag("-client", "192.168.0.10", ",", "servers IP addresses"); err != nil {
-		t.Errorf("%s error: %s", funcName, err)
-	}
-	if err := f.AddMultiFlag("-default", "default1,default2,default3", ",", "some default value"); err != nil {
-		t.Errorf("%s error: %s", funcName, err)
-	}
-
-	if err := f.parse(cmd1); err != nil {
-		t.Errorf("%s error: %s", funcName, err)
-	}
-	if err := f.parseEnv(); err != nil {
-		t.Errorf("%s error: %s", funcName, err)
-	}
-	if err := f.parseDefaults(); err != nil {
-		t.Errorf("%s error: %s", funcName, err)
-	}
-
-	s, err := f.GetString("-server")
-	if err != nil {
-		t.Errorf("%s error : %s", funcName, err)
-	}
-	if len(s) != 5 {
-		t.Errorf("%s error: exepecting 2 items, returned %d (%v)", funcName, len(s), s)
-	}
-	for _, v := range s {
-		found := false
-		if v == "10.0.0.1" || v == "10.0.0.2" || v == "10.0.0.6" || v == "10.0.0.7" || v == "10.0.0.8" {
-			found = true
-		}
-		if !found {
-			t.Errorf("%s error: flag values for \"-server\" do not match (%v)", funcName, s)
-		}
-	}
-
-	c, err := f.GetString("-client")
-	if err != nil {
-		t.Errorf("%s error : %s", funcName, err)
-	}
-	if len(c) != 3 {
-		t.Errorf("%s error: exepecting 3 items, returned %d (%v)", funcName, len(c), c)
-	}
-	for _, v := range c {
-		found := false
-		if v == "10.0.0.3" || v == "10.0.0.4" || v == "10.0.0.5" {
-			found = true
-		}
-		if !found {
-			t.Errorf("%s error: flag values for \"-client\" do not match (%v)", funcName, c)
-		}
-	}
-
-	d, err := f.GetString("-default")
-	if err != nil {
-		t.Errorf("%s error : %s", funcName, err)
-	}
-	if len(d) != 3 {
-		t.Errorf("%s error: exepecting 3 items, returned %d (%v)", funcName, len(d), d)
-	}
-	for _, v := range d {
-		found := false
-		if v == "default1" || v == "default2" || v == "default3" {
-			found = true
-		}
-		if !found {
-			t.Errorf("%s error: flag values for \"-default\" do not match (%v)", funcName, d)
-		}
-	}
-
-	if _, err := f.GetString("-doesnotexist"); err == nil {
-		t.Errorf("%s error: requesting values for a flag that does not exist must return an error", funcName)
-	}
-
-}
-
-func TestAddBoolFlagsWithEnv(t *testing.T) {
-	funcName := "TestAddBoolFlagsWithEnv"
-	f := NewFlag()
-	if f == nil {
-		t.Errorf("%s error: returned value is nil", funcName)
-	}
-
-	flagNames := []string{"-a", "--aaaaaa-aaaa", "-aa-aa"}
-	envName := "FLAG_TEST_BOOL"
-	envValue := "some_value"
-	description := "some description"
-
-	os.Setenv(envName, envValue)
-
-	f.AddBoolFlagsWithEnv(flagNames, envName, description)
-	if err := f.parseEnv(); err != nil {
-		t.Errorf("%s error: parse error: %s", funcName, err)
-	}
-
-	for _, flagName := range flagNames {
-		ff, ok := f.f[flagName]
-		if !ok {
-			t.Errorf("%s error: can not get Flag information for %s", funcName, flagName)
-		}
-
-		if len(ff.values) != 1 && ff.values[0] != "true" {
-			t.Errorf("%s error: boolean flag must return 1 value (true), got %d", funcName, len(ff.values))
-		}
-		if ff.description != description {
-			t.Errorf("%s error: description is not set (got %s)", funcName, ff.description)
-		}
-		for _, v := range ff.values {
-			if v != "true" {
-				t.Errorf("%s error: expecting flag set from environment variable %s to be %s, got %s ", funcName, envName, "true", v)
-			}
-		}
-	}
-}
-
 type input struct {
 	flags         []string
 	envName       string
@@ -284,9 +156,9 @@ func TestAddMultisWithEnv(t *testing.T) {
 
 	testTable := make([]testItem, 0)
 
-	//ti1 := testItem{
+	//MULTI
 	testTable = append(testTable, testItem{
-		testName: "multi01",
+		testName: "multi-from-command-line",
 		input: input{
 			flags:         []string{"-l", "--long", "--long-is-long"},
 			valuation:     Multi,
@@ -311,12 +183,12 @@ func TestAddMultisWithEnv(t *testing.T) {
 	})
 
 	testTable = append(testTable, testItem{
-		testName: "multiFromEnv01",
+		testName: "multi-from-default",
 		input: input{
 			flags:         []string{"-l", "--long", "--long-is-long"},
 			valuation:     Multi,
-			envName:       "TEST_LONG",
-			defaultValues: []string{"default_value"},
+			envName:       "",
+			defaultValues: []string{"default_value01", "default_value02"},
 			separator:     ",",
 			description:   "some description",
 			setEnv:        make(map[string]string),
@@ -328,15 +200,15 @@ func TestAddMultisWithEnv(t *testing.T) {
 			errParsingDefaults: false,
 			errParsingEnv:      false,
 			values: map[string][]string{
-				"-l":             []string{"default_value"},
-				"--long":         []string{"default_value"},
-				"--long-is-long": []string{"default_value"},
+				"-l":             []string{"default_value01", "default_value02"},
+				"--long":         []string{"default_value01", "default_value02"},
+				"--long-is-long": []string{"default_value01", "default_value02"},
 			},
 		},
 	})
 
 	testTable = append(testTable, testItem{
-		testName: "multiFromEnvWithSeparator",
+		testName: "multi-from-env-using-separator",
 		input: input{
 			flags:         []string{"-l", "--long", "--long-is-long"},
 			valuation:     Multi,
@@ -344,7 +216,9 @@ func TestAddMultisWithEnv(t *testing.T) {
 			defaultValues: []string{"default_value01", "default_value02", "default_value03"},
 			separator:     ",",
 			description:   "some description",
-			setEnv:        make(map[string]string),
+			setEnv: map[string]string{
+				"TEST_LONG": "from_env01,from_env02,from_env03",
+			},
 		},
 		command: []string{},
 		output: output{
@@ -353,9 +227,306 @@ func TestAddMultisWithEnv(t *testing.T) {
 			errParsingDefaults: false,
 			errParsingEnv:      false,
 			values: map[string][]string{
-				"-l":             []string{"default_value01", "default_value02", "default_value03"},
-				"--long":         []string{"default_value01", "default_value02", "default_value03"},
-				"--long-is-long": []string{"default_value01", "default_value02", "default_value03"},
+				"-l":             []string{"from_env01", "from_env02", "from_env03"},
+				"--long":         []string{"from_env01", "from_env02", "from_env03"},
+				"--long-is-long": []string{"from_env01", "from_env02", "from_env03"},
+			},
+		},
+	})
+
+	testTable = append(testTable, testItem{
+		testName: "multi-using-separator",
+		input: input{
+			flags:         []string{"-l", "--long", "--long-is-long"},
+			valuation:     Multi,
+			envName:       "",
+			defaultValues: []string{},
+			separator:     ",",
+			description:   "some description",
+			setEnv:        make(map[string]string),
+		},
+		command: []string{"-l", "value1,value2", "--long-is-long", "value3"},
+		output: output{
+			errInstantiation:   false,
+			errParsing:         false,
+			errParsingDefaults: false,
+			errParsingEnv:      false,
+			values: map[string][]string{
+				"-l":             []string{"value1", "value2", "value3"},
+				"--long":         []string{"value1", "value2", "value3"},
+				"--long-is-long": []string{"value1", "value2", "value3"},
+			},
+		},
+	})
+
+	testTable = append(testTable, testItem{
+		testName: "multi-with-error-because-space-in-flag",
+		input: input{
+			flags:         []string{"--flag-with space"},
+			valuation:     Multi,
+			envName:       "",
+			defaultValues: []string{"default_value01"},
+			separator:     ",",
+			description:   "some description",
+			setEnv:        make(map[string]string),
+		},
+		command: []string{"-l", "whatever"},
+		output: output{
+			errInstantiation:   true,
+			errParsing:         false,
+			errParsingDefaults: false,
+			errParsingEnv:      false,
+			values:             map[string][]string{},
+		},
+	})
+
+	testTable = append(testTable, testItem{
+		testName: "multi-with-error-because-space-in-env",
+		input: input{
+			flags:         []string{"--flag"},
+			valuation:     Multi,
+			envName:       "ENV_WITH SPACE",
+			defaultValues: []string{"default_value01"},
+			separator:     ",",
+			description:   "some description",
+			setEnv:        make(map[string]string),
+		},
+		command: []string{},
+		output: output{
+			errInstantiation:   true,
+			errParsing:         false,
+			errParsingDefaults: false,
+			errParsingEnv:      false,
+			values:             map[string][]string{},
+		},
+	})
+
+	//MONO
+	testTable = append(testTable, testItem{
+		testName: "mono-from-command-line",
+		input: input{
+			flags:         []string{"-l", "--long", "--long-is-long"},
+			valuation:     Mono,
+			envName:       "",
+			defaultValues: []string{"default_value"},
+			separator:     ",",
+			description:   "some description",
+			setEnv:        make(map[string]string),
+		},
+		command: []string{"-l", "value1"},
+		output: output{
+			errInstantiation:   false,
+			errParsing:         false,
+			errParsingDefaults: false,
+			errParsingEnv:      false,
+			values: map[string][]string{
+				"-l":             []string{"value1"},
+				"--long":         []string{"value1"},
+				"--long-is-long": []string{"value1"},
+			},
+		},
+	})
+
+	testTable = append(testTable, testItem{
+		testName: "mono-from-command-env",
+		input: input{
+			flags:         []string{"-l", "--long", "--long-is-long"},
+			valuation:     Mono,
+			envName:       "TEST_MONO_FROM_ENV",
+			defaultValues: []string{"default_value"},
+			separator:     ",",
+			description:   "some description",
+			setEnv: map[string]string{
+				"TEST_MONO_FROM_ENV": "value1",
+			},
+		},
+		command: []string{},
+		output: output{
+			errInstantiation:   false,
+			errParsing:         false,
+			errParsingDefaults: false,
+			errParsingEnv:      false,
+			values: map[string][]string{
+				"-l":             []string{"value1"},
+				"--long":         []string{"value1"},
+				"--long-is-long": []string{"value1"},
+			},
+		},
+	})
+
+	testTable = append(testTable, testItem{
+		testName: "mono-from-command-line-err-when-multivaluated",
+		input: input{
+			flags:         []string{"-l", "--long", "--long-is-long"},
+			valuation:     Mono,
+			envName:       "",
+			defaultValues: []string{"default_value"},
+			separator:     ",",
+			description:   "some description",
+			setEnv:        make(map[string]string),
+		},
+		command: []string{"-l", "value1", "--long", "value2"},
+		output: output{
+			errInstantiation:   false,
+			errParsing:         true,
+			errParsingDefaults: false,
+			errParsingEnv:      false,
+			values: map[string][]string{
+				"-l":             []string{"value1"},
+				"--long":         []string{"value1"},
+				"--long-is-long": []string{"value1"},
+			},
+		},
+	})
+
+	testTable = append(testTable, testItem{
+		testName: "mono-from-command-line-err-when-multidefaults",
+		input: input{
+			flags:         []string{"-l", "--long", "--long-is-long"},
+			valuation:     Mono,
+			envName:       "",
+			defaultValues: []string{"default_value01", "default_value02"},
+			separator:     ",",
+			description:   "some description",
+			setEnv:        make(map[string]string),
+		},
+		command: []string{"-l", "value1", "--long", "value2"},
+		output: output{
+			errInstantiation:   true,
+			errParsing:         false,
+			errParsingDefaults: false,
+			errParsingEnv:      false,
+			values: map[string][]string{
+				"-l":             []string{"value1"},
+				"--long":         []string{"value1"},
+				"--long-is-long": []string{"value1"},
+			},
+		},
+	})
+
+	testTable = append(testTable, testItem{
+		testName: "mono-from-command-line-err-when-unknown-flag",
+		input: input{
+			flags:         []string{"-l", "--long", "--long-is-long"},
+			valuation:     Mono,
+			envName:       "",
+			defaultValues: []string{},
+			separator:     ",",
+			description:   "some description",
+			setEnv:        make(map[string]string),
+		},
+		command: []string{"-l", "value1", "--unknown-flag", "unknown"},
+		output: output{
+			errInstantiation:   false,
+			errParsing:         true,
+			errParsingDefaults: false,
+			errParsingEnv:      false,
+			values: map[string][]string{
+				"-l":             []string{"value1"},
+				"--long":         []string{"value1"},
+				"--long-is-long": []string{"value1"},
+			},
+		},
+	})
+
+	testTable = append(testTable, testItem{
+		testName: "mono-from-command-line-err-when-value-is-missing",
+		input: input{
+			flags:         []string{"-l", "--long", "--long-is-long"},
+			valuation:     Mono,
+			envName:       "",
+			defaultValues: []string{},
+			separator:     ",",
+			description:   "some description",
+			setEnv:        make(map[string]string),
+		},
+		command: []string{"-l"},
+		output: output{
+			errInstantiation:   false,
+			errParsing:         true,
+			errParsingDefaults: false,
+			errParsingEnv:      false,
+			values: map[string][]string{
+				"-l":             []string{"value1"},
+				"--long":         []string{"value1"},
+				"--long-is-long": []string{"value1"},
+			},
+		},
+	})
+
+	//BOOL (NONE)
+	testTable = append(testTable, testItem{
+		testName: "bool",
+		input: input{
+			flags:         []string{"-f", "--flag"},
+			valuation:     None,
+			envName:       "",
+			defaultValues: []string{},
+			separator:     "",
+			description:   "some description",
+			setEnv:        make(map[string]string),
+		},
+		command: []string{"-f"},
+		output: output{
+			errInstantiation:   false,
+			errParsing:         false,
+			errParsingDefaults: false,
+			errParsingEnv:      false,
+			values: map[string][]string{
+				"-f":     []string{"true"},
+				"--flag": []string{"true"},
+			},
+		},
+	})
+
+	testTable = append(testTable, testItem{
+		testName: "bool-using-env",
+		input: input{
+			flags:         []string{"-f", "--flag"},
+			valuation:     None,
+			envName:       "FLAG_TEST_ENV",
+			defaultValues: []string{},
+			separator:     "",
+			description:   "some description",
+			setEnv: map[string]string{
+				"FLAG_TEST_ENV": "true",
+			},
+		},
+		command: []string{},
+		output: output{
+			errInstantiation:   false,
+			errParsing:         false,
+			errParsingDefaults: false,
+			errParsingEnv:      false,
+			values: map[string][]string{
+				"-f":     []string{"true"},
+				"--flag": []string{"true"},
+			},
+		},
+	})
+
+	testTable = append(testTable, testItem{
+		testName: "bool-err-with-default-value",
+		input: input{
+			flags:         []string{"-f", "--flag"},
+			valuation:     None,
+			envName:       "FLAG_TEST_ENV",
+			defaultValues: []string{"true"},
+			separator:     "",
+			description:   "some description",
+			setEnv: map[string]string{
+				"FLAG_TEST_ENV": "true",
+			},
+		},
+		command: []string{},
+		output: output{
+			errInstantiation:   true,
+			errParsing:         false,
+			errParsingDefaults: false,
+			errParsingEnv:      false,
+			values: map[string][]string{
+				"-f":     []string{"true"},
+				"--flag": []string{"true"},
 			},
 		},
 	})
@@ -420,28 +591,31 @@ func TestAddMultisWithEnv(t *testing.T) {
 			if !ti.output.errParsing {
 				t.Errorf("%s error [%s]: parsing failed: %s", funcName, ti.testName, err)
 			}
+			continue
 		}
 
 		if err := f.parseEnv(); err != nil {
 			if !ti.output.errParsingEnv {
 				t.Errorf("%s error [%s]: parsing environment variables failed: %s", funcName, ti.testName, err)
 			}
+			continue
 		}
 
 		if err := f.parseDefaults(); err != nil {
 			if !ti.output.errParsingDefaults {
 				t.Errorf("%s error [%s]: parsing default values failed: %s", funcName, ti.testName, err)
 			}
+			continue
 		}
 
-		for flagName, values := range ti.output.values {
-			v, err := f.Get(flagName)
+		for flagName, expectedValues := range ti.output.values {
+			setValues, err := f.Get(flagName)
 			if err != nil {
 				t.Errorf("%s error [%s]: can not get flag %s values: %s", funcName, ti.testName, flagName, err)
 			}
-			for _, expectedValue := range values {
+			for _, expectedValue := range expectedValues {
 				found := false
-				for _, setValue := range v {
+				for _, setValue := range setValues {
 					if expectedValue == setValue {
 						found = true
 					}
@@ -459,6 +633,184 @@ func TestAddMultisWithEnv(t *testing.T) {
 			}
 		}
 
+	}
+
+}
+
+func TestGetBool(t *testing.T) {
+	funcName := "TestGetBool"
+	f := NewFlag()
+	if f == nil {
+		t.Errorf("%s error: can not create flag", funcName)
+	}
+
+	f.AddBoolFlag("-f1", "some flag")
+	f.AddBoolFlag("-f2", "some other flag")
+	f.parse([]string{"-f1"})
+
+	res1, err := f.GetBool("-f1")
+	if err != nil {
+		t.Errorf("%s error: can not get boolean flag -f1 status", funcName)
+	}
+	if !res1 {
+		t.Errorf("%s error: -f1 is expected to be true", funcName)
+	}
+
+	res2, err := f.GetBool("-f2")
+	if err != nil {
+		t.Errorf("%s error: can not get boolean flag -f2 status", funcName)
+	}
+	if res2 {
+		t.Errorf("%s error: -f2 is expected to be false", funcName)
+	}
+	_, err1 := f.GetBool("-f3")
+	if err1 == nil {
+		t.Errorf("%s error: -f3 flag does not exist, expecting an error", funcName)
+	}
+}
+
+func TestGetMono(t *testing.T) {
+	funcName := "TestGetMono"
+	f := NewFlag()
+	if f == nil {
+		t.Errorf("%s error: can not create flag", funcName)
+	}
+
+	values := make(map[string]string)
+	values["string"] = "some string"
+	values["int"] = "-10"
+	values["int8"] = "-10"
+	values["int16"] = "-1024"
+	values["int32"] = "-65537"
+	values["int64"] = "-4294967297"
+	values["uint"] = "10"
+	values["uint8"] = "10"
+	values["uint16"] = "1024"
+	values["uint32"] = "65537"
+	values["uint64"] = "4294967297"
+	values["float32"] = "65537.65537"
+	values["float64"] = "4294967297.4294967297"
+
+	for k, v := range values {
+		f.AddMonoFlag(k, v, k+v)
+	}
+	if err := f.parseDefaults(); err != nil {
+		t.Errorf("%s error: can not parse default values: %s", funcName, err)
+	}
+
+	if _, err := f.Get("-unknown-flag"); err == nil {
+		t.Errorf("%s error: expecting an error when getting values for a nonexistent flag", funcName)
+	}
+
+	for k := range values {
+		switch k {
+		case "string":
+			slice, err := f.GetString(k)
+			if err != nil {
+				t.Errorf("%s error: get type %s error %s", funcName, k, err)
+			}
+			if reflect.TypeOf(slice[0]).String() != k {
+				t.Errorf("%s error: wrong type returned", funcName)
+			}
+		case "int":
+			slice, err := f.GetInt(k)
+			if err != nil {
+				t.Errorf("%s error: get type %s error %s", funcName, k, err)
+			}
+			if reflect.TypeOf(slice[0]).String() != k {
+				t.Errorf("%s error: wrong type returned", funcName)
+			}
+		case "int8":
+			slice, err := f.GetInt8(k)
+			if err != nil {
+				t.Errorf("%s error: get type %s error %s", funcName, k, err)
+			}
+			if reflect.TypeOf(slice[0]).String() != k {
+				t.Errorf("%s error: wrong type returned", funcName)
+			}
+		case "int16":
+			slice, err := f.GetInt16(k)
+			if err != nil {
+				t.Errorf("%s error: get type %s error %s", funcName, k, err)
+			}
+			if reflect.TypeOf(slice[0]).String() != k {
+				t.Errorf("%s error: wrong type returned", funcName)
+			}
+		case "int32":
+			slice, err := f.GetInt32(k)
+			if err != nil {
+				t.Errorf("%s error: get type %s error %s", funcName, k, err)
+			}
+			if reflect.TypeOf(slice[0]).String() != k {
+				t.Errorf("%s error: wrong type returned", funcName)
+			}
+		case "int64":
+			slice, err := f.GetInt64(k)
+			if err != nil {
+				t.Errorf("%s error: get type %s error %s", funcName, k, err)
+			}
+			if reflect.TypeOf(slice[0]).String() != k {
+				t.Errorf("%s error: wrong type returned", funcName)
+			}
+		case "uint":
+			slice, err := f.GetUint(k)
+			if err != nil {
+				t.Errorf("%s error: get type %s error %s", funcName, k, err)
+			}
+			if reflect.TypeOf(slice[0]).String() != k {
+				t.Errorf("%s error: wrong type returned", funcName)
+			}
+		case "uint8":
+			slice, err := f.GetUint8(k)
+			if err != nil {
+				t.Errorf("%s error: get type %s error %s", funcName, k, err)
+			}
+			if reflect.TypeOf(slice[0]).String() != k {
+				t.Errorf("%s error: wrong type returned", funcName)
+			}
+		case "uint16":
+			slice, err := f.GetUint16(k)
+			if err != nil {
+				t.Errorf("%s error: get type %s error %s", funcName, k, err)
+			}
+			if reflect.TypeOf(slice[0]).String() != k {
+				t.Errorf("%s error: wrong type returned", funcName)
+			}
+		case "uint32":
+			slice, err := f.GetUint32(k)
+			if err != nil {
+				t.Errorf("%s error: get type %s error %s", funcName, k, err)
+			}
+			if reflect.TypeOf(slice[0]).String() != k {
+				t.Errorf("%s error: wrong type returned", funcName)
+			}
+		case "uint64":
+			slice, err := f.GetUint64(k)
+			if err != nil {
+				t.Errorf("%s error: get type %s error %s", funcName, k, err)
+			}
+			if reflect.TypeOf(slice[0]).String() != k {
+				t.Errorf("%s error: wrong type returned", funcName)
+			}
+		case "float32":
+			slice, err := f.GetFloat32(k)
+			if err != nil {
+				t.Errorf("%s error: get type %s error %s", funcName, k, err)
+			}
+			if reflect.TypeOf(slice[0]).String() != k {
+				t.Errorf("%s error: wrong type returned", funcName)
+			}
+		case "float64":
+			slice, err := f.GetFloat64(k)
+			if err != nil {
+				t.Errorf("%s error: get type %s error %s", funcName, k, err)
+			}
+			if reflect.TypeOf(slice[0]).String() != k {
+				t.Errorf("%s error: wrong type returned", funcName)
+			}
+		default:
+			t.Errorf("%s error: unknown type to convert %s", funcName, k)
+		}
 	}
 
 }
