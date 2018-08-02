@@ -20,23 +20,23 @@ The following snippet declares -b and --boolean as boolean flags; -l and --long 
 multivaluated flags, settable with an environment variable, with default values;
 -w and --without-env in the same way, except for the environment variable
 
-    f := flag.NewFlag()
-    if f == nil {
-        fmt.Printf("can not create flag")
-        os.Exit(1)
-    }
+	f := flag.NewFlag()
+	if f == nil {
+		fmt.Printf("can not create flag")
+		os.Exit(1)
+	}
 
 	if err := f.AddBoolFlags([]string{"-b", "--boolean"}, "a boolean flag"); err != nil {
-        fmt.Printf("can not create boolean flag: %s", err)
-        os.Exit(1)
-    }
+		fmt.Printf("can not create boolean flag: %s", err)
+		os.Exit(1)
+	}
 	if err := f.AddMultiFlagsWithEnv([]string{"-l", "--long"}, "LONG_FLAG_ENV", "1,2", ",", "-l and --long set the long things"); err != nil {
-        fmt.Printf("can not create multivaluated flag: %s", err)
-        os.Exit(1)
+		fmt.Printf("can not create multivaluated flag: %s", err)
+		os.Exit(1)
     }
     if err := f.AddMultiFlags([]string{"-w", "--without-env"}, "value01,value02", ",", "without environment variable"); err != nil {
-        fmt.Printf("can not create multivaluated flag: %s", err)
-        os.Exit(1)
+		fmt.Printf("can not create multivaluated flag: %s", err)
+		os.Exit(1)
     }
 
 Values can be retrieved using specific method per expected type.

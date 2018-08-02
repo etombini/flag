@@ -1,4 +1,4 @@
-# Flag - Parsing commande line arguments in Go
+# Flag - Parsing command line arguments in Go
 
 [![GoDoc](https://godoc.org/github.com/etombini/flag?status.svg)](https://godoc.org/github.com/etombini/flag)
 
@@ -26,43 +26,41 @@ multivaluated flags, settable with an environment variable, with default values;
 `-w` and `--without-env ` in the same way, except for the environment variable
 
 ```go
-    f := flag.NewFlag()
-    if f == nil {
-        fmt.Printf("can not create flag")
-        os.Exit(1)
-    }
-
-	if err := f.AddBoolFlags([]string{"-b", "--boolean"}, "a boolean flag"); err != nil {
-        fmt.Printf("can not create boolean flag: %s", err)
-        os.Exit(1)
-    }
-	if err := f.AddMultiFlagsWithEnv([]string{"-l", "--long"}, "LONG_FLAG_ENV", "1,2", ",", "-l and --long set the long things"); err != nil {
-        fmt.Printf("can not create multivaluated flag: %s", err)
-        os.Exit(1)
-    }
-    if err := f.AddMultiFlags([]string{"-w", "--without-env"}, "value01,value02", ",", "without environment variable"); err != nil {
-        fmt.Printf("can not create multivaluated flag: %s", err)
-        os.Exit(1)
-    }
+f := flag.NewFlag()
+if f == nil {
+    fmt.Printf("can not create flag")
+    os.Exit(1)
+}
+if err := f.AddBoolFlags([]string{"-b", "--boolean"}, "a boolean flag"); err != nil {
+    fmt.Printf("can not create boolean flag: %s", err)
+    os.Exit(1)
+}
+if err := f.AddMultiFlagsWithEnv([]string{"-l", "--long"}, "LONG_FLAG_ENV", "1,2", ",", "-l and --long set the long things"); err != il {
+    fmt.Printf("can not create multivaluated flag: %s", err)
+    os.Exit(1)
+}
+if err := f.AddMultiFlags([]string{"-w", "--without-env"}, "value01,value02", ",", "without environment variable"); err != nil {
+    fmt.Printf("can not create multivaluated flag: %s", err)
+    os.Exit(1)
+}
 ```
 
 Values can be retrieved using specific method per expected type.
 
 ```go
-	firstFlag, err := f.GetBool("-b")
-	if err != nil {
-		return err
-	}
+firstFlag, err := f.GetBool("-b")
+if err != nil {
+	return err
+}
 
-	secondFlag, err := f.GetInt("-l")
-	if err != nil {
-		return err
-	}
+secondFlag, err := f.GetInt("-l")
+if err != nil {
+	return err
+}
 
-	for _, values := range secondFlag {
-		// do related stuff
-
-    }
+for _, values := range secondFlag {
+	// do related stuff
+}
 ```
 
 Setting values is done this way for each flag: 
