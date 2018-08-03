@@ -68,7 +68,8 @@ import (
 
 //Flag is the main data structure holding application flags
 type Flag struct {
-	f map[string]*flagItem
+	f          map[string]*flagItem
+	usageOrder []string
 }
 
 //Valuation tells if a Flag is multivaluated, monovaluated, not valuated (boolean)
@@ -90,7 +91,7 @@ func checkEnvFormat(env string) error {
 		return nil
 	}
 	if strings.ContainsAny(env, spaces) {
-		return fmt.Errorf("environment variable %s contains space caracters", env)
+		return fmt.Errorf("environment variable [%s] contains space caracters", env)
 	}
 	return nil
 }
@@ -100,7 +101,7 @@ func checkFlagFormat(flag string) error {
 		return fmt.Errorf("flag name is empty")
 	}
 	if strings.ContainsAny(flag, spaces) {
-		return fmt.Errorf("flag %s contains space caracters", flag)
+		return fmt.Errorf("flag [%s] contains space caracters", flag)
 	}
 	return nil
 }
@@ -120,7 +121,8 @@ type flagItem struct {
 //NewFlag returns a new pointer to Flag
 func NewFlag() *Flag {
 	return &Flag{
-		f: make(map[string]*flagItem),
+		f:          make(map[string]*flagItem),
+		usageOrder: make([]string, 0),
 	}
 }
 
@@ -206,6 +208,9 @@ func (f *Flag) add(flags []string, env string, defaults []string, valuation Valu
 		return err
 	}
 
+	if len(flags) == 0 {
+		return fmt.Errorf("no flag specified")
+	}
 	for _, flag := range flags {
 		if err := checkFlagFormat(flag); err != nil {
 			return err
@@ -246,6 +251,7 @@ func (f *Flag) add(flags []string, env string, defaults []string, valuation Valu
 	for _, flag := range flags {
 		f.f[flag] = ff
 	}
+	f.usageOrder = append(f.usageOrder, flags[0])
 	return nil
 }
 
@@ -648,7 +654,8 @@ func (f *Flag) Usage() {
 		fItem[fi] = true
 	}
 
-	for fi := range fItem {
+	for _, fname := range f.usageOrder {
+		fi := f.f[fname]
 		if fi.valuation == Multi {
 			fmt.Printf("  %s", strings.Join(fi.flags, ", and/or "))
 		} else {
@@ -661,8 +668,12 @@ func (f *Flag) Usage() {
 		if len(fi.separator) > 0 {
 			fmt.Printf(" (set multiple values at once using separator '%s')", fi.separator)
 		}
+		fmt.Println()
+		if len(fi.defaults) > 0 && fi.valuation != None {
+			fmt.Printf("\t\tDefault value(s): %s\n", strings.Join(fi.defaults, fi.separator))
+		}
 		description := strings.Replace(fi.description, "\n", "\n\t\t", -1)
-		fmt.Printf("\n\t\t%s\n\n", description)
+		fmt.Printf("\t\t%s\n\n", description)
 
 	}
 }
