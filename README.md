@@ -13,7 +13,7 @@ The following examples are equivalent from the application perspective.
  $ ./app --server 10.0.0.1,10.0.0.2
  [...]
  $ export SERVERS="10.0.0.1,10.0.0.2"
- $ ./app        # values are set using environment variable
+ $ ./app        # values are set using environment variables or default values
 ```
 
 Default values can be set within the application.
@@ -21,49 +21,43 @@ Default values can be set within the application.
 Flags are categorized as boolean, monovaluated (1 and only 1 value can be set) or
 multivaluated (several values can be associated with a flag).
 
-The following snippet declares `-b` and `--boolean` as boolean flags; `-l` and `--long` as
-multivaluated flags, settable with an environment variable, with default values;
-`-w` and `--without-env ` in the same way, except for the environment variable
+The following snippet declares :
+-b and --boolean as boolean flags;
+-s and --server as multivaluated flags (slice), settable with an environment variable;
+-i and --interval as a monovaluated flag, to stored as a uint64
+
+The sep tag allows the user to set several values at once using a separator.
 
 ```go
-f := flag.NewFlag()
-if f == nil {
-    fmt.Printf("can not create flag")
-    os.Exit(1)
-}
-if err := f.AddBoolFlags([]string{"-b", "--boolean"}, "a boolean flag"); err != nil {
-    fmt.Printf("can not create boolean flag: %s", err)
-    os.Exit(1)
-}
-if err := f.AddMultiFlagsWithEnv([]string{"-l", "--long"}, "LONG_FLAG_ENV", "1,2", ",", "-l and --long set the long things"); err != il {
-    fmt.Printf("can not create multivaluated flag: %s", err)
-    os.Exit(1)
-}
-if err := f.AddMultiFlags([]string{"-w", "--without-env"}, "value01,value02", ",", "without environment variable"); err != nil {
-    fmt.Printf("can not create multivaluated flag: %s", err)
-    os.Exit(1)
-}
-```
-
-Values can be retrieved using specific method per expected type.
-
-```go
-firstFlag, err := f.GetBool("-b")
-if err != nil {
-	return err
+type config struct {
+	Path     string   `names:"-p,--p"`
+	Servers  []string `names:"-s,--server" env:"SERVERS_TEST" sep:","`
+	Interval uint64   `names:"-i,--interval" env:"INTERVAL_TEST"`
+	SomeBool bool     `names:"-b,--boolean" env:"BOOL_TEST"`
 }
 
-secondFlag, err := f.GetInt("-l")
-if err != nil {
-	return err
-}
+func main() {
+	c := &config{
+		Path:     "some path",
+		Servers:  []string{"srv01", "srv02"},
+		Interval: 10,
+	}
 
-for _, values := range secondFlag {
-	// do related stuff
+	f := NewFlagSet(c)
+
+	if err := f.Parse(); err != nil {
+		fmt.Printf("ERROR: %s\n", err)
+	}
+
+	fmt.Printf("CONFIG:\npath: %s\nservers: %s\ninterval: %d\nsomeBool: %t\n",
+		c.Path,
+		strings.Join(c.Servers, "|"),
+		c.Interval,
+		c.SomeBool,
+	)
 }
-```
 
 Setting values is done this way for each flag: 
 1. Parsing the commande line
 2. If nothing is set from 1., parse environment variables
-3. If nothing is set from 2., parse default values
+3. If nothing is set from 2., default values already set apply

@@ -9,671 +9,577 @@ The following examples are equivalent from the application perspective.
  $ ./app --server 10.0.0.1,10.0.0.2
  [...]
  $ export SERVERS="10.0.0.1,10.0.0.2"
- $ ./app        # values are set using environment variable
+ $ ./app        # values are set using environment variables or default values
 
 Default values can be set within the application.
 
 Flags are categorized as boolean, monovaluated (1 and only 1 value can be set) or
 multivaluated (several values can be associated with a flag).
 
-The following snippet declares -b and --boolean as boolean flags; -l and --long as
-multivaluated flags, settable with an environment variable, with default values;
--w and --without-env in the same way, except for the environment variable
+The following snippet declares :
+-b and --boolean as boolean flags;
+-s and --server as multivaluated flags (slice), settable with an environment variable;
+-i and --interval as a monovaluated flag, to stored as a uint64
 
-	f := flag.NewFlag()
-	if f == nil {
-		fmt.Printf("can not create flag")
-		os.Exit(1)
+The sep tag allows the user to set several values at once using a separator.
+
+type config struct {
+	Path     string   `names:"-p,--p"`
+	Servers  []string `names:"-s,--server" env:"SERVERS_TEST" sep:","`
+	Interval uint64   `names:"-i,--interval" env:"INTERVAL_TEST"`
+	SomeBool bool     `names:"-b,--boolean" env:"BOOL_TEST"`
+}
+
+func main() {
+	c := &config{
+		Path:     "some path",
+		Servers:  []string{"srv01", "srv02"},
+		Interval: 10,
 	}
 
-	if err := f.AddBoolFlags([]string{"-b", "--boolean"}, "a boolean flag"); err != nil {
-		fmt.Printf("can not create boolean flag: %s", err)
-		os.Exit(1)
-	}
-	if err := f.AddMultiFlagsWithEnv([]string{"-l", "--long"}, "LONG_FLAG_ENV", "1,2", ",", "-l and --long set the long things"); err != nil {
-		fmt.Printf("can not create multivaluated flag: %s", err)
-		os.Exit(1)
-    }
-    if err := f.AddMultiFlags([]string{"-w", "--without-env"}, "value01,value02", ",", "without environment variable"); err != nil {
-		fmt.Printf("can not create multivaluated flag: %s", err)
-		os.Exit(1)
-    }
+	f := NewFlagSet(c)
 
-Values can be retrieved using specific method per expected type.
-
-	firstFlag, err := f.GetBool("-b")
-	if err != nil {
-		return err
+	if err := f.Parse(); err != nil {
+		fmt.Printf("ERROR: %s\n", err)
 	}
 
-	secondFlag, err := f.GetInt("-l")
-	if err != nil {
-		return err
-	}
-
-	for _, values := range secondFlag {
-		// do related stuff
-
-	}
-
+	fmt.Printf("CONFIG:\npath: %s\nservers: %s\ninterval: %d\nsomeBool: %t\n",
+		c.Path,
+		strings.Join(c.Servers, "|"),
+		c.Interval,
+		c.SomeBool,
+	)
+}
 */
 package flag
 
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 )
 
-//Flag is the main data structure holding application flags
-type Flag struct {
-	f          map[string]*flagItem
-	usageOrder []string
-}
-
-//Valuation tells if a Flag is multivaluated, monovaluated, not valuated (boolean)
-type Valuation int
+type valuation int
 
 const (
-	//Multi allow an Argument to hold several values
-	Multi Valuation = 0
-	//Mono allows an Argument to hold only one value
-	Mono Valuation = 1
-	//None does not allow an Argument to hold a value
-	None Valuation = 2
-
-	spaces string = " \n\r\t\v\f"
+	none valuation = iota
+	mono
+	multi
 )
 
-func checkEnvFormat(env string) error {
-	if len(env) == 0 {
-		return nil
+type flag struct {
+	names     []string
+	values    []string
+	valuation valuation
+	env       string
+	finalType reflect.Kind
+	index     int
+	usage     string
+	separator string
+	isSet     bool
+}
+
+func (f *flag) String() string {
+	return fmt.Sprintf("Flag.names: %s\nvalues: %s\nvaluation: %d\nenv: %s\ntype: %s\nis set: %t\nindex: %d\n",
+		strings.Join(f.names, ";"),
+		strings.Join(f.values, ";"),
+		int(f.valuation),
+		f.env,
+		f.finalType.String(),
+		f.isSet,
+		f.index,
+	)
+
+}
+
+//FlagSet is a set of flags holding parameters to populate the final data structure
+//provided
+type FlagSet struct {
+	config interface{}
+	fmap   map[string]*flag
+	flist  []string
+}
+
+//NewFlagSet returns a pointer to a new FlagSet.
+//config is a pointer to the struct to be populated with user inputs on command line
+//or using environment variables. For example:
+// type config struct {
+//	 Help bool `names:"-h,--help" usage:"prints this help message"
+//	 Targets []string `names:"-s,--server" env:"SERVERS" sep:"," usage:"server to contact"`
+// }
+//
+func NewFlagSet(config interface{}) *FlagSet {
+	fs := &FlagSet{
+		config: config,
+		fmap:   make(map[string]*flag),
+		flist:  make([]string, 0),
 	}
-	if strings.ContainsAny(env, spaces) {
-		return fmt.Errorf("environment variable [%s] contains space caracters", env)
+
+	if err := fs.setupFlags(); err != nil {
+		panic("could not create FlagSet: " + err.Error())
+	}
+	return fs
+}
+
+func (fs *FlagSet) setupFlags() error {
+	if reflect.TypeOf(fs.config).Kind() != reflect.Ptr {
+		return fmt.Errorf("interface provided to NewFlagSet must be a pointer to a struct")
+	}
+	t := reflect.TypeOf(fs.config).Elem()
+
+	for i := 0; i < t.NumField(); i++ {
+		ft := t.Field(i)
+
+		if ft.Type.Kind() == reflect.Ptr {
+			return fmt.Errorf("pointer in config structure is not supported (%s)", ft.Name)
+		}
+		if ft.Type.Kind() == reflect.Map {
+			return fmt.Errorf("map in config structure is not supported (%s)", ft.Name)
+		}
+		if ft.Type.Kind() == reflect.Chan {
+			return fmt.Errorf("chan in config structure is not supported (%s)", ft.Name)
+		}
+
+		//valuation for this flag
+		ftValuation := mono
+		if ft.Type.Kind() == reflect.Slice {
+			ftValuation = multi
+		}
+		if ft.Type.Kind() == reflect.Bool {
+			ftValuation = none
+		}
+
+		flag := &flag{
+			names:     make([]string, 0),
+			values:    make([]string, 0),
+			valuation: ftValuation,
+			env:       "",
+			finalType: ft.Type.Kind(),
+			index:     i,
+			usage:     "",
+			separator: "",
+			isSet:     false,
+		}
+
+		// get names for this flag
+		namesTag, ok := ft.Tag.Lookup("names")
+		if !ok {
+			return fmt.Errorf("improper tag usage for flags: tag \"names\" is required")
+		}
+		names := strings.Split(namesTag, ",")
+		for _, s := range names {
+			s = strings.TrimSpace(s)
+			if len(s) == 0 {
+				continue
+			}
+			flag.names = append(flag.names, s)
+		}
+		if len(flag.names) == 0 {
+			return fmt.Errorf("could not get any names tag for %s", ft.Name)
+		}
+
+		if envTag, ok := ft.Tag.Lookup("env"); ok {
+			envTag = strings.TrimSpace(envTag)
+			flag.env = envTag
+		}
+
+		if sepTag, ok := ft.Tag.Lookup("sep"); ok {
+			flag.separator = strings.TrimSpace(sepTag)
+		}
+
+		if usageTag, ok := ft.Tag.Lookup("usage"); ok {
+			flag.usage = strings.TrimSpace(usageTag)
+		}
+
+		for _, name := range flag.names {
+			fs.fmap[name] = flag
+		}
+		fs.flist = append(fs.flist, flag.names[0])
 	}
 	return nil
 }
 
-func checkFlagFormat(flag string) error {
-	if len(flag) == 0 {
-		return fmt.Errorf("flag name is empty")
+//Parse parse command line and populate provided configuration structure
+func (fs *FlagSet) Parse() error {
+
+	if err := fs.parseCommand(os.Args[1:]); err != nil {
+		return fmt.Errorf("could not parse commande line: %s", err)
 	}
-	if strings.ContainsAny(flag, spaces) {
-		return fmt.Errorf("flag [%s] contains space caracters", flag)
+
+	if err := fs.parseEnv(); err != nil {
+		return fmt.Errorf("could not get values from environment variables: %s", err)
 	}
+
+	if err := fs.setConfig(); err != nil {
+		return fmt.Errorf("could not populate data structure: %s", err)
+	}
+
 	return nil
 }
 
-//Flag struct represent a specific flag defined by a user
-type flagItem struct {
-	flags       []string
-	envFlag     string
-	isSet       bool
-	values      []string
-	defaults    []string
-	valuation   Valuation
-	separator   string
-	description string
-}
-
-//NewFlag returns a new pointer to Flag
-func NewFlag() *Flag {
-	return &Flag{
-		f:          make(map[string]*flagItem),
-		usageOrder: make([]string, 0),
-	}
-}
-
-//AddBoolFlagsWithEnv add several boolean flags for the same behavior. For example
-//-f and --force
-func (f *Flag) AddBoolFlagsWithEnv(flags []string, env string, description string) error {
-	return f.add(flags, env, []string{}, None, "", description)
-}
-
-//AddBoolFlagWithEnv add a boolean flag, possibly set using an environment variable
-func (f *Flag) AddBoolFlagWithEnv(flag string, env string, description string) error {
-	return f.AddBoolFlagsWithEnv([]string{flag}, env, description)
-}
-
-//AddBoolFlags add several boolean flags for the same behavior. For example
-//-f and --force
-func (f *Flag) AddBoolFlags(flags []string, description string) error {
-	return f.AddBoolFlagsWithEnv(flags, "", description)
-}
-
-//AddBoolFlag add a boolean flag
-func (f *Flag) AddBoolFlag(flag string, description string) error {
-	return f.AddBoolFlagWithEnv(flag, "", description)
-}
-
-//AddMonoFlagsWithEnv add several flags that can handle only one value and can not be used multiple times
-func (f *Flag) AddMonoFlagsWithEnv(flags []string, env string, defaults string, description string) error {
-	return f.add(flags, env, []string{defaults}, Mono, "", description)
-}
-
-//AddMonoFlagWithEnv add a flag that can handle only one value and can not be used multiple times
-func (f *Flag) AddMonoFlagWithEnv(flag string, env string, defaults string, description string) error {
-	return f.AddMonoFlagsWithEnv([]string{flag}, env, defaults, description)
-}
-
-//AddMonoFlags add several flags that can handle only one value and can not be used multiple times
-func (f *Flag) AddMonoFlags(flags []string, defaults string, description string) error {
-	return f.AddMonoFlagsWithEnv(flags, "", defaults, description)
-}
-
-//AddMonoFlag add a flag that can handle only one value and can not be used multiple times
-func (f *Flag) AddMonoFlag(flag string, defaults string, description string) error {
-	return f.AddMonoFlagWithEnv(flag, "", defaults, description)
-}
-
-//AddMultiFlagsWithEnv add a flag that can handle several values and can be used multiple times.
-//For example --server 10.1.2.3 --server 10.2.3.4 or --server 10.1.2.3,10.2.3.4 where "," is defined as a separator
-func (f *Flag) AddMultiFlagsWithEnv(flags []string, env string, defaults string, separator string, description string) error {
-	if len(separator) == 0 {
-		return f.add(flags, env, []string{defaults}, Multi, separator, description)
-	}
-	d := make([]string, 0)
-	for _, v := range strings.Split(defaults, separator) {
-		if len(v) == 0 {
-			continue
-		}
-		d = append(d, v)
-	}
-	return f.add(flags, env, d, Multi, separator, description)
-}
-
-//AddMultiFlagWithEnv add a flag that can handle several values and can be used multiple times.
-//For example --server 10.1.2.3 --server 10.2.3.4 or --server 10.1.2.3,10.2.3.4 where "," is defined as a separator
-func (f *Flag) AddMultiFlagWithEnv(flag string, env string, defaults string, separator string, description string) error {
-	return f.AddMultiFlagsWithEnv([]string{flag}, env, defaults, separator, description)
-}
-
-//AddMultiFlags add a flag that can handle several values and can be used multiple times.
-//For example --server 10.1.2.3 --server 10.2.3.4 or --server 10.1.2.3,10.2.3.4 where "," is defined as a separator
-func (f *Flag) AddMultiFlags(flags []string, defaults string, separator string, description string) error {
-	return f.AddMultiFlagsWithEnv(flags, "", defaults, separator, description)
-}
-
-//AddMultiFlag add a flag that can handle several values and can be used multiple times.
-//For example --server 10.1.2.3 --server 10.2.3.4 or --server 10.1.2.3,10.2.3.4 where "," is defined as a separator
-func (f *Flag) AddMultiFlag(flag string, defaults string, separator string, description string) error {
-	return f.AddMultiFlagWithEnv(flag, "", defaults, separator, description)
-}
-
-//AddMulti adds several flags to handle a value, for example allowing both usage of "-c" and "--config"
-func (f *Flag) add(flags []string, env string, defaults []string, valuation Valuation, separator string, description string) error {
-	if err := checkEnvFormat(env); err != nil {
-		return err
-	}
-
-	if len(flags) == 0 {
-		return fmt.Errorf("no flag specified")
-	}
-	for _, flag := range flags {
-		if err := checkFlagFormat(flag); err != nil {
-			return err
-		}
-	}
-
-	for _, flag := range flags {
-		if _, ok := f.f[flag]; ok {
-			return fmt.Errorf("flag [%s] is already defined", flag)
-		}
-	}
-
-	if len(defaults) > 0 && valuation == None {
-		return fmt.Errorf("default value(s) defined for boolean flag(s) %v", flags)
-	}
-	if len(defaults) > 1 && valuation == Mono {
-		return fmt.Errorf("default multivaluation defined for monovaluated flag(s) %s", flags)
-	}
-	ff := &flagItem{
-		flags:       make([]string, 0),
-		envFlag:     env,
-		isSet:       false,
-		values:      make([]string, 0),
-		defaults:    make([]string, 0),
-		valuation:   valuation,
-		separator:   separator,
-		description: description,
-	}
-	for _, flag := range flags {
-		ff.flags = append(ff.flags, flag)
-	}
-	for _, d := range defaults {
-		if len(d) == 0 {
-			continue
-		}
-		ff.defaults = append(ff.defaults, d)
-	}
-	for _, flag := range flags {
-		f.f[flag] = ff
-	}
-	f.usageOrder = append(f.usageOrder, flags[0])
-	return nil
-}
-
-//Get returns values (as strings) set for this flag
-func (f *Flag) Get(flag string) ([]string, error) {
-	res, ok := f.f[flag]
-	if !ok {
-		return nil, fmt.Errorf("flag %s not defined", flag)
-	}
-	return res.values, nil
-}
-
-//Parse parse command line instructions and environment variables to set up the Flag struct
-func (f *Flag) Parse() error {
-	if err := f.parse(os.Args[1:]); err != nil {
-		return err
-	}
-	if err := f.parseEnv(); err != nil {
-		return err
-	}
-	if err := f.parseDefaults(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (f *Flag) parse(args []string) error {
+func (fs *FlagSet) parseCommand(args []string) error {
 	if len(args) == 0 {
 		return nil
 	}
-	fv, ok := f.f[args[0]]
+
+	arg := args[0]
+	fitem, ok := fs.fmap[arg]
 	if !ok {
-		return fmt.Errorf("unknown flag: %s", args[0])
+		return fmt.Errorf("%s is not a valid flag", arg)
 	}
 
-	if (fv.valuation == Mono || fv.valuation == Multi) && len(args) < 2 {
-		return fmt.Errorf("flag %s requires a value", args[0])
+	//boolean flag (valuation == none)
+	if fs.fmap[arg].finalType == reflect.Bool {
+		fs.fmap[arg].isSet = true
+		return fs.parseCommand(args[1:])
 	}
 
-	//Valuation None
-	if fv.valuation == None {
-		return f.parseNone(fv, args[1:])
+	if len(args) < 2 {
+		return fmt.Errorf("missing value for flag %s", arg)
+	}
+	values := args[1]
+
+	//mono flag (valuation == mono)
+	if fitem.valuation == mono && fitem.isSet {
+		return fmt.Errorf("flag %s already set", arg)
 	}
 
-	//Valuation Mono
-	if fv.valuation == Mono {
-		return f.parseMono(fv, args[1:])
+	if fitem.valuation == mono {
+		fitem.values = append(fitem.values, values)
+		fitem.isSet = true
+		return fs.parseCommand(args[2:])
 	}
 
-	//Valuation Multi
-	if fv.valuation == Multi {
-		return f.parseMulti(fv, args[1:])
-	}
-
-	return fmt.Errorf("error with %s flag, it must be a boolean, mono-valuated or multi-valuated", args[0])
-}
-
-func (f *Flag) parseNone(fItem *flagItem, args []string) error {
-	fItem.values = append(fItem.values, "true")
-	fItem.isSet = true
-	return f.parse(args)
-}
-
-func (f *Flag) parseMono(fItem *flagItem, args []string) error {
-	if fItem.isSet {
-		return fmt.Errorf("flag %s defined several times", args[0])
-	}
-	fItem.values = append(fItem.values, args[0])
-	fItem.isSet = true
-	return f.parse(args[1:])
-}
-
-func (f *Flag) parseMulti(fItem *flagItem, args []string) error {
-	if len(fItem.separator) == 0 || !strings.Contains(args[0], fItem.separator) {
-		fItem.values = append(fItem.values, args[0])
-		fItem.isSet = true
-		return f.parse(args[1:])
-	}
-	splitted := strings.Split(args[0], fItem.separator)
-	for _, v := range splitted {
-		if len(v) == 0 {
-			continue
-		}
-		fItem.values = append(fItem.values, v)
-		fItem.isSet = true
-	}
-	return f.parse(args[1:])
-}
-
-func (f *Flag) parseEnv() error {
-	for _, fv := range f.f {
-		if fv.isSet {
-			continue
-		}
-		if len(fv.envFlag) == 0 {
-			continue
-		}
-		env := os.Getenv(fv.envFlag)
-		if len(env) == 0 {
-			continue
-		}
-		if fv.valuation == None {
-			fv.values = append(fv.values, "true")
-			fv.isSet = true
-			continue
-		}
-		if fv.valuation == Mono {
-			fv.values = append(fv.values, env)
-			fv.isSet = true
-			continue
-		}
-		if fv.valuation == Multi {
-			if len(fv.separator) == 0 {
-				fv.values = append(fv.values, env)
-				fv.isSet = true
-				continue
+	//multi flag (valuation == multi)
+	if len(fitem.separator) != 0 {
+		splitted := strings.Split(values, fitem.separator)
+		found := false
+		for _, v := range splitted {
+			if len(strings.TrimSpace(v)) != 0 {
+				fitem.values = append(fitem.values, v)
+				found = true
+				fitem.isSet = true
 			}
-			splitted := strings.Split(env, fv.separator)
+		}
+		if !found {
+			return fmt.Errorf("missing value for flag %s", arg)
+		}
+	} else {
+		fitem.values = append(fitem.values, values)
+		fitem.isSet = true
+	}
+	return fs.parseCommand(args[2:])
+}
+
+func (fs *FlagSet) parseEnv() error {
+
+	for _, fname := range fs.flist {
+		fitem := fs.fmap[fname]
+		if fitem.isSet || len(fitem.env) == 0 {
+			continue
+		}
+
+		values := os.Getenv(fitem.env)
+		if len(values) == 0 {
+			continue
+		}
+
+		if fitem.valuation == none {
+			fitem.isSet = true
+			continue
+		}
+
+		if fitem.valuation == mono {
+			fitem.values = append(fitem.values, values)
+			fitem.isSet = true
+			continue
+		}
+
+		if len(fitem.separator) != 0 {
+			splitted := strings.Split(values, fitem.separator)
 			for _, v := range splitted {
-				if len(v) == 0 {
-					continue
+				if len(strings.TrimSpace(v)) != 0 {
+					fitem.values = append(fitem.values, v)
+					fitem.isSet = true
 				}
-				fv.values = append(fv.values, v)
-				fv.isSet = true
 			}
-			continue
 		}
-		return fmt.Errorf("error with %s environment flag, it must be a boolean, mono-valuated or multi-valuated", fv.envFlag)
+
+		if len(fitem.values) == 0 {
+			fitem.values = append(fitem.values, values)
+			fitem.isSet = true
+		}
 	}
+
 	return nil
 }
 
-func (f *Flag) parseDefaults() error {
-	for _, fv := range f.f {
-		if fv.isSet {
+func (fs *FlagSet) setConfig() error {
+	if !reflect.ValueOf(fs.config).Elem().Field(0).CanAddr() {
+		fmt.Printf("can not addr fs.config field(0)\n")
+	}
+	if !reflect.ValueOf(fs.config).Elem().Field(0).IsValid() {
+		fmt.Printf("not valid fs.config field(0)\n")
+	}
+	if !reflect.ValueOf(fs.config).Elem().Field(0).CanSet() {
+		fmt.Printf("can not set fs.config field(0)\n")
+	}
+
+	for _, fname := range fs.flist {
+		fitem := fs.fmap[fname]
+		if !fitem.isSet {
 			continue
 		}
-		if len(fv.defaults) == 0 {
+
+		ith := reflect.ValueOf(fs.config).Elem().Field(fitem.index)
+		if fitem.valuation == none {
+			ith.SetBool(true)
 			continue
 		}
-		for _, v := range fv.defaults {
-			if len(v) == 0 {
+
+		if fitem.valuation == mono {
+			switch fitem.finalType {
+			case reflect.String:
+				ith.SetString(fitem.values[0])
 				continue
+			case reflect.Uint:
+				v, err := strconv.ParseUint(fitem.values[0], 10, 0)
+				if err != nil {
+					return err
+				}
+				ith.SetUint(v)
+				continue
+			case reflect.Uint8:
+				v, err := strconv.ParseUint(fitem.values[0], 10, 8)
+				if err != nil {
+					return err
+				}
+				ith.SetUint(v)
+				continue
+			case reflect.Uint16:
+				v, err := strconv.ParseUint(fitem.values[0], 10, 16)
+				if err != nil {
+					return err
+				}
+				ith.SetUint(v)
+				continue
+			case reflect.Uint32:
+				v, err := strconv.ParseUint(fitem.values[0], 10, 32)
+				if err != nil {
+					return err
+				}
+				ith.SetUint(v)
+				continue
+			case reflect.Uint64:
+				v, err := strconv.ParseUint(fitem.values[0], 10, 64)
+				if err != nil {
+					return err
+				}
+				ith.SetUint(v)
+				continue
+			case reflect.Int:
+				v, err := strconv.ParseInt(fitem.values[0], 10, 0)
+				if err != nil {
+					return err
+				}
+				ith.SetInt(v)
+				continue
+			case reflect.Int8:
+				v, err := strconv.ParseInt(fitem.values[0], 10, 8)
+				if err != nil {
+					return err
+				}
+				ith.SetInt(v)
+				continue
+			case reflect.Int16:
+				v, err := strconv.ParseInt(fitem.values[0], 10, 16)
+				if err != nil {
+					return err
+				}
+				ith.SetInt(v)
+				continue
+			case reflect.Int32:
+				v, err := strconv.ParseInt(fitem.values[0], 10, 32)
+				if err != nil {
+					return err
+				}
+				ith.SetInt(v)
+				continue
+			case reflect.Int64:
+				v, err := strconv.ParseInt(fitem.values[0], 10, 64)
+				if err != nil {
+					return err
+				}
+				ith.SetInt(v)
+				continue
+			case reflect.Float32:
+				v, err := strconv.ParseFloat(fitem.values[0], 32)
+				if err != nil {
+					return err
+				}
+				ith.SetFloat(v)
+				continue
+			case reflect.Float64:
+				v, err := strconv.ParseFloat(fitem.values[0], 64)
+				if err != nil {
+					return err
+				}
+				ith.SetFloat(v)
+				continue
+			default:
+				return fmt.Errorf("can not guess type: %s", fitem.finalType.String())
 			}
-			fv.values = append(fv.values, v)
-			fv.isSet = true
+		}
+
+		if fitem.valuation == multi {
+			newSlice := reflect.MakeSlice(ith.Type(), 0, 0)
+
+			switch ith.Type().Elem().Kind() {
+			case reflect.String:
+				for _, vstr := range fitem.values {
+					rv := reflect.ValueOf(vstr)
+					newSlice = reflect.Append(newSlice, rv)
+				}
+				ith.Set(newSlice)
+				continue
+			case reflect.Uint:
+				for _, vstr := range fitem.values {
+					v, err := strconv.ParseUint(vstr, 10, 0)
+					if err != nil {
+						return err
+					}
+					rv := reflect.ValueOf(uint(v))
+					newSlice = reflect.Append(newSlice, rv)
+				}
+				ith.Set(newSlice)
+				continue
+			case reflect.Uint8:
+				for _, vstr := range fitem.values {
+					v, err := strconv.ParseUint(vstr, 10, 8)
+					if err != nil {
+						return err
+					}
+					rv := reflect.ValueOf(uint8(v))
+					newSlice = reflect.Append(newSlice, rv)
+				}
+				ith.Set(newSlice)
+				continue
+			case reflect.Uint16:
+				for _, vstr := range fitem.values {
+					v, err := strconv.ParseUint(vstr, 10, 16)
+					if err != nil {
+						return err
+					}
+					rv := reflect.ValueOf(uint16(v))
+					newSlice = reflect.Append(newSlice, rv)
+				}
+				ith.Set(newSlice)
+				continue
+			case reflect.Uint32:
+				for _, vstr := range fitem.values {
+					v, err := strconv.ParseUint(vstr, 10, 32)
+					if err != nil {
+						return err
+					}
+					rv := reflect.ValueOf(uint32(v))
+					newSlice = reflect.Append(newSlice, rv)
+				}
+				ith.Set(newSlice)
+				continue
+			case reflect.Uint64:
+				for _, vstr := range fitem.values {
+					v, err := strconv.ParseUint(vstr, 10, 64)
+					if err != nil {
+						return err
+					}
+					rv := reflect.ValueOf(uint64(v))
+					newSlice = reflect.Append(newSlice, rv)
+				}
+				ith.Set(newSlice)
+				continue
+			case reflect.Int:
+				for _, vstr := range fitem.values {
+					v, err := strconv.ParseInt(vstr, 10, 0)
+					if err != nil {
+						return err
+					}
+					rv := reflect.ValueOf(int(v))
+					newSlice = reflect.Append(newSlice, rv)
+				}
+				ith.Set(newSlice)
+				continue
+			case reflect.Int8:
+				for _, vstr := range fitem.values {
+					v, err := strconv.ParseInt(vstr, 10, 8)
+					if err != nil {
+						return err
+					}
+					rv := reflect.ValueOf(int8(v))
+					newSlice = reflect.Append(newSlice, rv)
+				}
+				ith.Set(newSlice)
+				continue
+			case reflect.Int16:
+				for _, vstr := range fitem.values {
+					v, err := strconv.ParseInt(vstr, 10, 16)
+					if err != nil {
+						return err
+					}
+					rv := reflect.ValueOf(int16(v))
+					newSlice = reflect.Append(newSlice, rv)
+				}
+				ith.Set(newSlice)
+				continue
+			case reflect.Int32:
+				for _, vstr := range fitem.values {
+					v, err := strconv.ParseInt(vstr, 10, 32)
+					if err != nil {
+						return err
+					}
+					rv := reflect.ValueOf(int32(v))
+					newSlice = reflect.Append(newSlice, rv)
+				}
+				ith.Set(newSlice)
+				continue
+			case reflect.Int64:
+				for _, vstr := range fitem.values {
+					v, err := strconv.ParseInt(vstr, 10, 64)
+					if err != nil {
+						return err
+					}
+					rv := reflect.ValueOf(int64(v))
+					newSlice = reflect.Append(newSlice, rv)
+				}
+				ith.Set(newSlice)
+				continue
+			case reflect.Float32:
+				for _, vstr := range fitem.values {
+					v, err := strconv.ParseFloat(vstr, 32)
+					if err != nil {
+						return err
+					}
+					rv := reflect.ValueOf(float32(v))
+					newSlice = reflect.Append(newSlice, rv)
+				}
+				ith.Set(newSlice)
+				continue
+			case reflect.Float64:
+				for _, vstr := range fitem.values {
+					v, err := strconv.ParseFloat(vstr, 64)
+					if err != nil {
+						return err
+					}
+					rv := reflect.ValueOf(float64(v))
+					newSlice = reflect.Append(newSlice, rv)
+				}
+				ith.Set(newSlice)
+				continue
+			default:
+				return fmt.Errorf("can not guess type: %s", fitem.finalType.String())
+			}
 		}
 	}
 	return nil
-}
-
-func (f *Flag) isOK(key string, v Valuation) error {
-	fv, ok := f.f[key]
-	if !ok {
-		return fmt.Errorf("%s is not defined", key)
-	}
-	if fv.valuation != v {
-		return fmt.Errorf("%s is not of type %v", key, v)
-	}
-	return nil
-}
-
-func (f *Flag) isNone(key string) bool {
-	if err := f.isOK(key, None); err != nil {
-		return false
-	}
-	return true
-}
-
-func (f *Flag) isMono(key string) bool {
-	if err := f.isOK(key, Mono); err != nil {
-		return false
-	}
-	return true
-}
-
-func (f *Flag) isMulti(key string) bool {
-	if err := f.isOK(key, Multi); err != nil {
-		return false
-	}
-	return true
-}
-
-//GetBool return the flag value for the corresponding boolean key
-func (f *Flag) GetBool(key string) (bool, error) {
-	if !f.isNone(key) {
-		return false, fmt.Errorf("%s key is not a boolean flag", key)
-	}
-
-	return f.f[key].isSet, nil
-}
-
-//GetString returns a slice of string for each value assiciated with the flag
-func (f *Flag) GetString(key string) ([]string, error) {
-	if !f.isMono(key) && !f.isMulti(key) {
-		return nil, fmt.Errorf("%s key is a boolean flag", key)
-	}
-	return f.f[key].values, nil
-}
-
-//GetInt returns a slice of Int for each value associated with the flag
-func (f *Flag) GetInt(key string) ([]int, error) {
-	if !f.isMono(key) && !f.isMulti(key) {
-		return nil, fmt.Errorf("%s key is a boolean flag", key)
-	}
-	res := make([]int, 0)
-	for _, v := range f.f[key].values {
-		i, err := strconv.Atoi(v)
-		if err != nil {
-			return res, err
-		}
-		res = append(res, i)
-	}
-	return res, nil
-}
-
-//GetInt8 returns a slice of Int for each value associated with the flag
-func (f *Flag) GetInt8(key string) ([]int8, error) {
-	if !f.isMono(key) && !f.isMulti(key) {
-		return nil, fmt.Errorf("%s key is a boolean flag", key)
-	}
-	res := make([]int8, 0)
-	for _, v := range f.f[key].values {
-		i, err := strconv.ParseInt(v, 10, 8)
-		if err != nil {
-			return res, err
-		}
-		res = append(res, int8(i))
-	}
-	return res, nil
-}
-
-//GetInt16 returns a slice of Int for each value associated with the flag
-func (f *Flag) GetInt16(key string) ([]int16, error) {
-	if !f.isMono(key) && !f.isMulti(key) {
-		return nil, fmt.Errorf("%s key is a boolean flag", key)
-	}
-	res := make([]int16, 0)
-	for _, v := range f.f[key].values {
-		i, err := strconv.ParseInt(v, 10, 16)
-		if err != nil {
-			return res, err
-		}
-		res = append(res, int16(i))
-	}
-	return res, nil
-}
-
-//GetInt32 returns a slice of Int for each value associated with the flag
-func (f *Flag) GetInt32(key string) ([]int32, error) {
-	if !f.isMono(key) && !f.isMulti(key) {
-		return nil, fmt.Errorf("%s key is a boolean flag", key)
-	}
-	res := make([]int32, 0)
-	for _, v := range f.f[key].values {
-		i, err := strconv.ParseInt(v, 10, 32)
-		if err != nil {
-			return res, err
-		}
-		res = append(res, int32(i))
-	}
-	return res, nil
-}
-
-//GetInt64 returns a slice of Int for each value associated with the flag
-func (f *Flag) GetInt64(key string) ([]int64, error) {
-	if !f.isMono(key) && !f.isMulti(key) {
-		return nil, fmt.Errorf("%s key is a boolean flag", key)
-	}
-	res := make([]int64, 0)
-	for _, v := range f.f[key].values {
-		i, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return res, err
-		}
-		res = append(res, int64(i))
-	}
-	return res, nil
-}
-
-//GetUint returns a slice of Int for each value associated with the flag
-func (f *Flag) GetUint(key string) ([]uint, error) {
-	if !f.isMono(key) && !f.isMulti(key) {
-		return nil, fmt.Errorf("%s key is a boolean flag", key)
-	}
-	res := make([]uint, 0)
-	for _, v := range f.f[key].values {
-		i, err := strconv.ParseUint(v, 10, 0)
-		if err != nil {
-			return res, err
-		}
-		res = append(res, uint(i))
-	}
-	return res, nil
-}
-
-//GetUint8 returns a slice of Int for each value associated with the flag
-func (f *Flag) GetUint8(key string) ([]uint8, error) {
-	if !f.isMono(key) && !f.isMulti(key) {
-		return nil, fmt.Errorf("%s key is a boolean flag", key)
-	}
-	res := make([]uint8, 0)
-	for _, v := range f.f[key].values {
-		i, err := strconv.ParseUint(v, 10, 8)
-		if err != nil {
-			return res, err
-		}
-		res = append(res, uint8(i))
-	}
-	return res, nil
-}
-
-//GetUint16 returns a slice of Int for each value associated with the flag
-func (f *Flag) GetUint16(key string) ([]uint16, error) {
-	if !f.isMono(key) && !f.isMulti(key) {
-		return nil, fmt.Errorf("%s key is a boolean flag", key)
-	}
-	res := make([]uint16, 0)
-	for _, v := range f.f[key].values {
-		i, err := strconv.ParseUint(v, 10, 16)
-		if err != nil {
-			return res, err
-		}
-		res = append(res, uint16(i))
-	}
-	return res, nil
-}
-
-//GetUint32 returns a slice of Int for each value associated with the flag
-func (f *Flag) GetUint32(key string) ([]uint32, error) {
-	if !f.isMono(key) && !f.isMulti(key) {
-		return nil, fmt.Errorf("%s key is a boolean flag", key)
-	}
-	res := make([]uint32, 0)
-	for _, v := range f.f[key].values {
-		i, err := strconv.ParseUint(v, 10, 32)
-		if err != nil {
-			return res, err
-		}
-		res = append(res, uint32(i))
-	}
-	return res, nil
-}
-
-//GetUint64 returns a slice of Int for each value associated with the flag
-func (f *Flag) GetUint64(key string) ([]uint64, error) {
-	if !f.isMono(key) && !f.isMulti(key) {
-		return nil, fmt.Errorf("%s key is a boolean flag", key)
-	}
-	res := make([]uint64, 0)
-	for _, v := range f.f[key].values {
-		i, err := strconv.ParseUint(v, 10, 64)
-		if err != nil {
-			return res, err
-		}
-		res = append(res, uint64(i))
-	}
-	return res, nil
-}
-
-//GetFloat32 returns a slice of Int for each value associated with the flag
-func (f *Flag) GetFloat32(key string) ([]float32, error) {
-	if !f.isMono(key) && !f.isMulti(key) {
-		return nil, fmt.Errorf("%s key is a boolean flag", key)
-	}
-	res := make([]float32, 0)
-	for _, v := range f.f[key].values {
-		i, err := strconv.ParseFloat(v, 32)
-		if err != nil {
-			return res, err
-		}
-		res = append(res, float32(i))
-	}
-	return res, nil
-}
-
-//GetFloat64 returns a slice of Int for each value associated with the flag
-func (f *Flag) GetFloat64(key string) ([]float64, error) {
-	if !f.isMono(key) && !f.isMulti(key) {
-		return nil, fmt.Errorf("%s key is a boolean flag", key)
-	}
-	res := make([]float64, 0)
-	for _, v := range f.f[key].values {
-		i, err := strconv.ParseFloat(v, 64)
-		if err != nil {
-			return res, err
-		}
-		res = append(res, float64(i))
-	}
-	return res, nil
-}
-
-//Usage prints command usage on stdout
-func (f *Flag) Usage() {
-	fmt.Printf("Usage: %s [OPTIONS]\nOptions:\n", os.Args[0])
-
-	fItem := make(map[*flagItem]bool)
-
-	for _, fi := range f.f {
-		fItem[fi] = true
-	}
-
-	for _, fname := range f.usageOrder {
-		fi := f.f[fname]
-		if fi.valuation == Multi {
-			fmt.Printf("  %s", strings.Join(fi.flags, ", and/or "))
-		} else {
-			fmt.Printf("  %s", strings.Join(fi.flags, ", or "))
-		}
-
-		if len(fi.envFlag) > 0 {
-			fmt.Printf(", or set $%s", fi.envFlag)
-		}
-		if len(fi.separator) > 0 {
-			fmt.Printf(" (set multiple values at once using separator '%s')", fi.separator)
-		}
-		fmt.Println()
-		if len(fi.defaults) > 0 && fi.valuation != None {
-			fmt.Printf("\t\tDefault value(s): %s\n", strings.Join(fi.defaults, fi.separator))
-		}
-		description := strings.Replace(fi.description, "\n", "\n\t\t", -1)
-		fmt.Printf("\t\t%s\n\n", description)
-
-	}
 }
