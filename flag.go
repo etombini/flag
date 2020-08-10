@@ -102,7 +102,7 @@ type FlagSet struct {
 	flist  []string
 }
 
-//NewFlagSet returns a pointer to a new FlagSet.
+//NewFlagSet returns a pointer to a new FlagSet or nil if an error occured.
 //config is a pointer to the struct to be populated with user inputs on command line
 //or using environment variables. For example:
 // type config struct {
@@ -118,7 +118,7 @@ func NewFlagSet(config interface{}) *FlagSet {
 	}
 
 	if err := fs.setupFlags(); err != nil {
-		panic("could not create FlagSet: " + err.Error())
+		return nil
 	}
 	return fs
 }
